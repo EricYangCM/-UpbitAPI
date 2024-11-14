@@ -1,0 +1,8 @@
+RestSharp
+  HTTP 요청을 간편하게 처리하기 위한 라이브러리입니다.
+  
+Newtonsoft.Json
+  JSON 데이터를 직렬화 및 역직렬화하기 위한 라이브러리입니다.
+  
+System.IdentityModel.Tokens.Jwt
+  JWT(Json Web Token)를 생성하고 처리하기 위한 라이브러리입니다.
