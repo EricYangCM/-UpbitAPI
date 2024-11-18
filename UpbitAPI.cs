@@ -11,7 +11,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.Security.Principal;
 using System.Security.Cryptography;
 
-namespace This_is_it
+namespace ThisIsIt_v2
 {
     public class UpbitApi
     {
@@ -62,9 +62,24 @@ namespace This_is_it
                 return null;
             }
         }
-        
+
 
         // 현재 시세 조회 메서드
+        public async Task<decimal> GetCurrentPriceAsync(string market)
+        {
+            // 원화 마켓으로 고정
+            string marketPair = $"KRW-{market}";
+
+            var client = new RestClient($"https://api.upbit.com/v1/ticker?markets={marketPair}");
+            var request = new RestRequest();
+            request.Method = Method.Get;
+
+            var response = await client.ExecuteAsync(request);
+            var data = JsonConvert.DeserializeObject<List<Ticker>>(response.Content);
+
+            return data[0].TradePrice;
+        }
+        /*
         public async Task<decimal> GetCurrentPriceAsync(string market)
         {
             var client = new RestClient($"https://api.upbit.com/v1/ticker?markets={market}");
@@ -74,7 +89,7 @@ namespace This_is_it
             var data = JsonConvert.DeserializeObject<List<Ticker>>(response.Content);
             return data[0].TradePrice;
         }
-
+        */
 
         #region 주문
 
@@ -152,6 +167,7 @@ namespace This_is_it
 
 
         // 계좌 정보 클래스
+        /*
         public class Account
         {
             public string Currency { get; set; }
@@ -160,8 +176,28 @@ namespace This_is_it
             public string AvgBuyPrice { get; set; }
             public bool AvgBuyPriceModified { get; set; }
             public string UnitCurrency { get; set; }
-        }
+        }*/
 
+        public class Account
+        {
+            [JsonProperty("currency")]
+            public string Currency { get; set; }
+
+            [JsonProperty("balance")]
+            public string Balance { get; set; }
+
+            [JsonProperty("locked")]
+            public string Locked { get; set; }
+
+            [JsonProperty("avg_buy_price")]
+            public string AvgBuyPrice { get; set; }
+
+            [JsonProperty("avg_buy_price_modified")]
+            public bool AvgBuyPriceModified { get; set; }
+
+            [JsonProperty("unit_currency")]
+            public string UnitCurrency { get; set; }
+        }
 
         public class ProfitLossData
         {
