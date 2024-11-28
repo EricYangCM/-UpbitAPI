@@ -11,7 +11,8 @@ using Microsoft.IdentityModel.Tokens;
 using System.Security.Principal;
 using System.Security.Cryptography;
 
-namespace ThisIsIt_v2
+
+namespace ThisisIt_v3
 {
     public class UpbitApi
     {
@@ -67,6 +68,42 @@ namespace ThisIsIt_v2
         // 현재 시세 조회 메서드
         public async Task<decimal> GetCurrentPriceAsync(string market)
         {
+            // 원화 마켓으로 설정
+            string marketPair = $"KRW-{market}";
+
+            var client = new RestClient($"https://api.upbit.com/v1/ticker?markets={marketPair}");
+            var request = new RestRequest();
+            request.Method = Method.Get;
+
+            var response = await client.ExecuteAsync(request);
+
+            if (!response.IsSuccessful)
+            {
+                //throw new Exception($"API 호출 실패: {response.StatusCode} - {response.Content}");
+
+                Console.WriteLine("API 호출 실패");
+
+                return 0;
+            }
+
+            try
+            {
+                // JSON 응답이 배열로 반환될 경우
+                var data = JsonConvert.DeserializeObject<List<Ticker>>(response.Content);
+                return data[0].TradePrice;
+            }
+            catch (JsonSerializationException)
+            {
+                // JSON 응답이 객체로 반환될 경우
+                var data = JsonConvert.DeserializeObject<Ticker>(response.Content);
+                return data.TradePrice;
+            }
+        }
+
+        /*
+        // 현재 시세 조회 메서드
+        public async Task<decimal> GetCurrentPriceAsync(string market)
+        {
             // 원화 마켓으로 고정
             string marketPair = $"KRW-{market}";
 
@@ -79,6 +116,8 @@ namespace ThisIsIt_v2
 
             return data[0].TradePrice;
         }
+        */
+
         /*
         public async Task<decimal> GetCurrentPriceAsync(string market)
         {
@@ -155,10 +194,67 @@ namespace ThisIsIt_v2
             else
             {
                 Console.WriteLine($"주문 요청 실패: {response.StatusCode} - {response.Content}");
-                throw new Exception($"API 요청 실패: {response.StatusCode} - {response.Content}");
+                //throw new Exception($"API 요청 실패: {response.StatusCode} - {response.Content}");
+                return null;
             }
         }
 
+
+        /// <summary>
+        /// 시장가 매수 주문
+        /// </summary>
+        /// <param name="currency"></param>
+        /// <param name="Won_KRW"></param>
+        /// <returns></returns>
+        public async Task ExecuteOrder_Buy(string currency, string Won_KRW)
+        {
+            try
+            {
+                // 주문 요청에 필요한 파라미터 설정
+                /*
+                string market = "KRW-BTC";   // BTC/원화 시장
+                string side = "bid";         // "bid"는 매수, "ask"는 매도
+                string volume = "0.01";      // 주문량 (0.01 BTC)
+                string price = "1000";       // 주문 가격 (1000 KRW)
+                string ordType = "limit";    // "limit"은 지정가 주문
+                */
+
+                // 주문 요청 호출
+                string result = await PlaceOrderAsync("KRW-" + currency, "bid", "", Won_KRW, "price");
+            }
+            catch
+            {
+                Console.WriteLine("매수 에러");
+            }
+        }
+
+        /// <summary>
+        /// 시장가 매도 주문
+        /// </summary>
+        /// <param name="currency"></param>
+        /// <param name="Volume"></param>
+        /// <returns></returns>
+        public async Task ExecuteOrder_Sell(string currency, string Volume)
+        {
+            try
+            {
+                // 주문 요청에 필요한 파라미터 설정
+                /*
+                string market = "KRW-BTC";   // BTC/원화 시장
+                string side = "bid";         // "bid"는 매수, "ask"는 매도
+                string volume = "0.01";      // 주문량 (0.01 BTC)
+                string price = "1000";       // 주문 가격 (1000 KRW)
+                string ordType = "limit";    // "limit"은 지정가 주문
+                */
+
+                // 주문 요청 호출
+                string result = await PlaceOrderAsync("KRW-" + currency, "ask", Volume, "", "market");
+            }
+            catch
+            {
+                Console.WriteLine("매도 에러");
+            }
+        }
 
 
         #endregion
@@ -215,5 +311,4 @@ namespace ThisIsIt_v2
             public decimal TradePrice { get; set; }
         }
     }
-
 }
