@@ -6,3 +6,7 @@ Newtonsoft.Json
   
 System.IdentityModel.Tokens.Jwt
   JWT(Json Web Token)를 생성하고 처리하기 위한 라이브러리입니다.
+
+
+Jose.JWT
+TradeList용
