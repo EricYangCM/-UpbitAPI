@@ -1,0 +1,26 @@
+
+        string _KeyName = "";
+        string _Accesskey = "";
+        string _SecreKey = "";
+        UpbitApi _Upbit;
+        void Init_Key()
+        {
+            // Key Checker Form
+            var newForm = new form_keyCheck();
+            newForm.ShowDialog();
+
+            // Get Keys
+            _KeyName = newForm.KeyName;
+            _Accesskey = newForm.Access_Key;
+            _SecreKey = newForm.Secre_Key;
+
+            // Key Check
+            if ((_Accesskey == "" || _SecreKey == ""))
+            {
+                Application.Exit();
+            }
+
+            // Set Key
+            _Upbit = new UpbitApi(_Accesskey, _SecreKey);
+            _UpbitTradeList = new UpbitTradeList(_Accesskey, _SecreKey);
+        }
