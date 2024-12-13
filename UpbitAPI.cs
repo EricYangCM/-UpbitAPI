@@ -11,8 +11,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.Security.Principal;
 using System.Security.Cryptography;
 
-
-namespace ThisisIt_v3
+namespace ThisisIt_v4._0.Upbit
 {
     public class UpbitApi
     {
@@ -100,35 +99,6 @@ namespace ThisisIt_v3
             }
         }
 
-        /*
-        // 현재 시세 조회 메서드
-        public async Task<decimal> GetCurrentPriceAsync(string market)
-        {
-            // 원화 마켓으로 고정
-            string marketPair = $"KRW-{market}";
-
-            var client = new RestClient($"https://api.upbit.com/v1/ticker?markets={marketPair}");
-            var request = new RestRequest();
-            request.Method = Method.Get;
-
-            var response = await client.ExecuteAsync(request);
-            var data = JsonConvert.DeserializeObject<List<Ticker>>(response.Content);
-
-            return data[0].TradePrice;
-        }
-        */
-
-        /*
-        public async Task<decimal> GetCurrentPriceAsync(string market)
-        {
-            var client = new RestClient($"https://api.upbit.com/v1/ticker?markets={market}");
-            var request = new RestRequest();
-            request.Method = Method.Get;
-            var response = await client.ExecuteAsync(request);
-            var data = JsonConvert.DeserializeObject<List<Ticker>>(response.Content);
-            return data[0].TradePrice;
-        }
-        */
 
         #region 주문
 
@@ -206,7 +176,7 @@ namespace ThisisIt_v3
         /// <param name="currency"></param>
         /// <param name="Won_KRW"></param>
         /// <returns></returns>
-        public async Task ExecuteOrder_Buy(string currency, string Won_KRW)
+        public async Task<bool> ExecuteOrder_Buy(string currency, string Won_KRW)
         {
             try
             {
@@ -221,10 +191,14 @@ namespace ThisisIt_v3
 
                 // 주문 요청 호출
                 string result = await PlaceOrderAsync("KRW-" + currency, "bid", "", Won_KRW, "price");
+
+                return true;
             }
             catch
             {
                 Console.WriteLine("매수 에러");
+
+                return false;
             }
         }
 
@@ -234,7 +208,7 @@ namespace ThisisIt_v3
         /// <param name="currency"></param>
         /// <param name="Volume"></param>
         /// <returns></returns>
-        public async Task ExecuteOrder_Sell(string currency, string Volume)
+        public async Task<bool> ExecuteOrder_Sell(string currency, string Volume)
         {
             try
             {
@@ -249,10 +223,15 @@ namespace ThisisIt_v3
 
                 // 주문 요청 호출
                 string result = await PlaceOrderAsync("KRW-" + currency, "ask", Volume, "", "market");
+
+                return true;
+
             }
             catch
             {
                 Console.WriteLine("매도 에러");
+
+                return false;
             }
         }
 
@@ -263,17 +242,6 @@ namespace ThisisIt_v3
 
 
         // 계좌 정보 클래스
-        /*
-        public class Account
-        {
-            public string Currency { get; set; }
-            public string Balance { get; set; }
-            public string Locked { get; set; }
-            public string AvgBuyPrice { get; set; }
-            public bool AvgBuyPriceModified { get; set; }
-            public string UnitCurrency { get; set; }
-        }*/
-
         public class Account
         {
             [JsonProperty("currency")]
