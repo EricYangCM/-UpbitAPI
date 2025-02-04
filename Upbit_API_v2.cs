@@ -5,14 +5,17 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Drawing;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.UI.WebControls;
+using System.Windows.Forms.DataVisualization.Charting;
 using static GGo_v2.Upbit_API_v2;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement.TextBox;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement.TrackBar;
@@ -57,6 +60,13 @@ namespace GGo_v2
             public int N_of_RISE {  get; set; }                 // 상승 코인 수
             public int N_of_FALL { get; set; }                  // 하락 코인 수
             public int N_of_EVEN { get; set; }                  // 하락 코인 수
+
+
+            // 분 캔들 관련
+            public string Candle_TargetCoinName {  get; set; }
+            public int Candle_Minutes {  get; set; }
+            public int Candle_MA_Period { get; set; }
+            public int Candle_N_of_Candles { get; set; }
         }
 
 
@@ -98,6 +108,8 @@ namespace GGo_v2
             public double Change_Price { get; set; }           // 변화액
             public double Change_Rate { get; set; }            // 변화율
             public double Trade_Volume {  get; set; }          // 거래량
+
+            public DateTime Datetime { get; set; }             // 타임스탬프
         }
 
         // 주문 리스트
@@ -109,11 +121,48 @@ namespace GGo_v2
             public string Type {  get; set; }           // 매수, 매도
         }
 
+
+        // 분봉
+        public class Candle
+        {
+            public string CoinName { get; set; }        // 코인명 영문
+            public string CoinNameKR { get; set; }      // 코인명 한글
+
+            public int Minutes { get; set; }            // 몇분봉
+
+            public DateTime Datetime { get; set; }      // 타임스탬프
+
+            public double Opening_Price { get; set; }   // 시가
+            public double High_Price { get; set; }      // 고가
+            public double Low_Price { get; set; }       // 저가
+            public double Trade_Price { get; set; }     // 종가
+
+            public int MA_Period {  get; set; }             // 이동평균선 기준
+            public double MA {  get; set; }                 // 이동평균선
+            public double Bollinger_Upper { get; set; }     // 볼린저 상단
+            public double Bollinger_Middle { get; set; }    // 볼린저 중단
+            public double Bollinger_Lower { get; set; }     // 볼린저 하단
+
+            public string Red_or_Blue { get; set; }         // 양봉 음봉 여부
+        }
+
+
         #endregion
 
 
 
         #region Public Methods
+
+
+        // 캔들 정보 업데이트
+        public void Set_TargetCandleInfo(string CoinName, int Minute, int MA_Period, int N_of_Candles)
+        {
+            _Info.Candle_TargetCoinName = CoinName;
+            _Info.Candle_Minutes = Minute;
+            _Info.Candle_MA_Period = MA_Period;
+            _Info.Candle_N_of_Candles = N_of_Candles;
+        }
+
 
         // 시장가 매수
         public void Request_Buy_Market(string CoinName, string Price)
@@ -156,13 +205,6 @@ namespace GGo_v2
 
 
 
-        public void Test()
-        {
-            
-        }
-
-
-
         #endregion
 
 
@@ -170,11 +212,12 @@ namespace GGo_v2
 
         private Info _Info = new Info();
 
-        private List<CoinList> _CoinList = new List<CoinList>();
+        public List<CoinList> CoinListData = new List<CoinList>();
 
         private List<Accounts> _Recent_Accounts = new List<Accounts>();
 
         private List<Ticker> _Recent_Tickers = new List<Ticker>();
+
 
         #endregion
 
@@ -204,9 +247,18 @@ namespace GGo_v2
 
 
         // 분 캔들 조회
+        private void Request_Candle()
+        {
+            UpbitCommandParameters para = new UpbitCommandParameters();
+            para.CoinName = _Info.Candle_TargetCoinName;
+            para.Candle_Minute = _Info.Candle_Minutes;
+            para.Candle_MA_Period = _Info.Candle_MA_Period;
+            para.Candle_N_of_Candles = _Info.Candle_N_of_Candles;
+
+            AddCommand(UpbitCommands.분캔들조회, para);
+        }
 
 
-        
 
         // 주문 리스트 조회
 
@@ -228,6 +280,8 @@ namespace GGo_v2
         // 정해진 시간마다 데이터 업데이트 (ticker, account 등)
         BackgroundWorker _bworker_DataUpdator = new BackgroundWorker();
 
+        // Ticker를 빠르게 할건지 Candle을 빠르게 할껀지 결정
+
         private void _bworker_DataUpdator_DoWork(object sender, DoWorkEventArgs e)
         {
             // 기본 정보 업데이트 확인 대기
@@ -237,21 +291,20 @@ namespace GGo_v2
             }
 
 
-            // 정해진 시간마다 업데이트. (Ticker는 0.5초, 계좌는 1초)
-            int cnt_account = 0;
+            // 정해진 시간마다 업데이트.
             while(true)
             {
-                cnt_account++;
-                if(cnt_account == 2)
-                {
-                    Request_Accounts();
-                    cnt_account = 0;
-                }
-                
+                Request_Accounts();
 
                 Request_Ticker();
 
-                Thread.Sleep(500);
+                if(_Info.Candle_TargetCoinName != null)
+                {
+                    Request_Candle();
+                }
+               
+
+                Thread.Sleep(1000);
             }
         }
 
@@ -264,7 +317,7 @@ namespace GGo_v2
         #region API Methods
 
         // Accounts Authorization Token 생성
-        private string Get_AuthorizationToken_forAccounts(Dictionary<string, string> queryParams = null)
+        private string Get_AuthorizationToken(Dictionary<string, string> queryParams = null)
         {
             string tempQueryHash = "";
 
@@ -311,7 +364,7 @@ namespace GGo_v2
         // 계좌 조회
         private async Task Get_Accounts_API()
         {
-            string authorizationToken = Get_AuthorizationToken_forAccounts();
+            string authorizationToken = Get_AuthorizationToken();
 
             var client = new RestClient("https://api.upbit.com/v1/accounts");
             var request = new RestRequest();
@@ -339,7 +392,7 @@ namespace GGo_v2
                 tempAccounts = accounts
                     .Select(s => new Accounts {
                         CoinName = s.Currency,
-                        CoinNameKR = s.Currency != "KRW" ? _CoinList.FirstOrDefault(c => c.CoinName == s.Currency).CoinNameKR : "",
+                        CoinNameKR = s.Currency != "KRW" ? CoinListData.FirstOrDefault(c => c.CoinName == s.Currency).CoinNameKR : "",
                         Volume = s.Balance, 
                         Volume_Pending = s.Locked, 
                         AvgBuyPrice = s.AvgBuyPrice })
@@ -391,7 +444,7 @@ namespace GGo_v2
                 { "is_details", "true" }
             };
 
-            string authorizationToken = Get_AuthorizationToken_forAccounts(queryParams);
+            string authorizationToken = Get_AuthorizationToken(queryParams);
 
             var client = new RestClient("https://api.upbit.com/v1/market/all");
             var request = new RestRequest();
@@ -406,7 +459,7 @@ namespace GGo_v2
                 List<Upbit_Market> allCoins = JsonConvert.DeserializeObject<List<Upbit_Market>>(response.Content);
 
                 // 코인 리스트에 저장
-                _CoinList = allCoins
+                CoinListData = allCoins
                     .Where(coin => coin.Name_Market.StartsWith("KRW-")) // KRW-로 시작하는 항목만 필터링
                     .Select(coin => new CoinList
                     {
@@ -426,7 +479,7 @@ namespace GGo_v2
         // Ticker 조회
         private async Task Get_Ticker_API()
         {
-            string authorizationToken = Get_AuthorizationToken_forAccounts();
+            string authorizationToken = Get_AuthorizationToken();
 
             var client = new RestClient("https://api.upbit.com/v1/ticker/all?quote_currencies=KRW");
             var request = new RestRequest();
@@ -448,8 +501,8 @@ namespace GGo_v2
                     .Select(ticker => new Ticker
                     {
                         CoinName = ticker.Market.Replace("KRW-", ""), // KRW- 제거
-                        CoinNameKR = _CoinList.FirstOrDefault(c => c.CoinName == ticker.Market.Replace("KRW-", "")).CoinNameKR,
-                       
+                        CoinNameKR = CoinListData.FirstOrDefault(c => c.CoinName == ticker.Market.Replace("KRW-", "")).CoinNameKR,
+
                         Opening_Price = ticker.OpeningPrice,
                         High_Price = ticker.HighPrice,
                         Low_Price = ticker.LowPrice,
@@ -460,6 +513,7 @@ namespace GGo_v2
                         Change_Price = ticker.SignedChangePrice,
                         Change_Rate = ticker.SignedChangeRate,
                         Trade_Volume = ticker.TradeVolume,
+                        Datetime = DateTimeOffset.FromUnixTimeMilliseconds(ticker.Timestamp).UtcDateTime.AddHours(9)
                     })
                     .OrderBy(ticker => ticker.CoinNameKR) // Market 기준으로 정렬
                     .ToList();
@@ -487,7 +541,8 @@ namespace GGo_v2
                     Change = a.Change,
                     Change_Rate = a.Change_Rate,
                     Change_Price = a.Change_Price,
-                    Trade_Volume = a.Trade_Volume
+                    Trade_Volume = a.Trade_Volume,
+                    Datetime = a.Datetime
                 }
                 ).ToList();
 
@@ -504,6 +559,123 @@ namespace GGo_v2
         }
 
         // 분 캔들 조회
+        private async Task Get_Candle_Minutes_API(string CoinName, int Minute, int MA_Period, int N_of_Candles)
+        {
+            // Query Parameter
+            var queryParams = new Dictionary<string, string>
+            {
+                { "market", $"KRW-{CoinName}" },
+                { "count", "200" }
+            };
+
+            // Authorization Token 생성
+            string authorizationToken = Get_AuthorizationToken(queryParams);
+
+            // RestClient 및 Request 구성
+            var client = new RestClient($"https://api.upbit.com/v1/candles/minutes/{Minute}");
+            var request = new RestRequest();
+            request.Method = Method.Get;
+
+            // Query Parameters 추가
+            foreach (var param in queryParams)
+            {
+                request.AddQueryParameter(param.Key, param.Value);
+            }
+
+            // Authorization 헤더 추가
+            request.AddHeader("Authorization", authorizationToken);
+
+            // 요청 실행
+            var response = await client.ExecuteAsync(request);
+
+            // 응답 처리
+            if (response.IsSuccessful)
+            {
+
+                // 캔들 가져오기
+                List<Upbit_Candle_Minutes> tempCandles = JsonConvert.DeserializeObject<List<Upbit_Candle_Minutes>>(response.Content);
+
+                tempCandles = tempCandles.OrderBy(c => c.candle_date_time_kst).ToList(); // 날짜순 정렬 후 리스트 업데이트
+
+                string coinName = _Info.Candle_TargetCoinName;
+                string coinNameKR = CoinListData.FirstOrDefault(a => a.CoinName == _Info.Candle_TargetCoinName).CoinNameKR;
+
+                // Deep Copy
+                List<Candle> candle_ret = tempCandles.Select(a => new Candle
+                {
+                    CoinName = coinName,
+                    CoinNameKR = coinNameKR,
+
+                    Minutes = a.unit,
+                    Datetime = DateTime.ParseExact(a.candle_date_time_kst, "yyyy-MM-dd'T'HH:mm:ss", null),
+
+                    Opening_Price = a.opening_price,
+                    High_Price = a.high_price,
+                    Low_Price = a.low_price,
+                    Trade_Price = a.trade_price,
+
+                    MA_Period = MA_Period
+                }
+                ).ToList();
+
+
+
+                for (int i = 0; i < candle_ret.Count; i++)
+                {
+                    if (i + 1 >= MA_Period)
+                    {
+                        // 이동평균 계산
+                        var subset = candle_ret.Skip(i + 1 - MA_Period).Take(MA_Period);
+                        double movingAverage = subset.Average(c => c.Trade_Price);
+
+                        // 표준편차 계산
+                        double standardDeviation = Math.Sqrt(subset.Average(c => Math.Pow(c.Trade_Price - movingAverage, 2)));
+
+                        // 볼린저 밴드 계산
+                        candle_ret[i].MA = movingAverage;
+                        candle_ret[i].Bollinger_Upper = movingAverage + (2 * standardDeviation);
+                        candle_ret[i].Bollinger_Middle = movingAverage;
+                        candle_ret[i].Bollinger_Lower = movingAverage - (2 * standardDeviation);
+
+                        // 양봉, 음봉 계산
+                        candle_ret[i].Red_or_Blue =
+                            candle_ret[i].Trade_Price > candle_ret[i].Opening_Price ? "Red" :
+                            candle_ret[i].Trade_Price < candle_ret[i].Opening_Price ? "Blue" : "Doge";
+                    }
+                }
+
+                // 볼린저 없는 만큼 잘라냄
+                candle_ret = candle_ret.Skip(MA_Period - 1).ToList();
+
+                // 요청 데이터 개수만큼만 최근기준으로 남기기
+                candle_ret = candle_ret.Skip(candle_ret.Count - N_of_Candles).Take(N_of_Candles).ToList();
+
+                // 캔들 시리즈 만들기
+                Series candleSeries = Create_CandleSeries_from_List(candle_ret);
+
+                // Chart Area 같이 반환
+                ChartArea chartArea = new ChartArea("MinuteCandle");
+
+                // 축 그리드 색상 투명도 설정 (10%)
+                chartArea.AxisX.MajorGrid.LineColor = Color.FromArgb(25, Color.Black); // 10% 투명도 (255 * 0.1 = 25)
+                chartArea.AxisY.MajorGrid.LineColor = Color.FromArgb(25, Color.Black); // 10% 투명도
+                // Y축 스케일 MinMax 구하기
+                double MinY = candle_ret.Min(candle => candle.Low_Price) * 0.99; // low_price 중 최소값
+                double MaxY = candle_ret.Max(candle => candle.High_Price) * 1.01; // high_price 중 최대값
+                chartArea.AxisY.Minimum = MinY;
+                chartArea.AxisY.Maximum = MaxY;
+
+
+                // 성공 시 이벤트 발생
+                CandleRetrieved?.Invoke(this, new CandleEventArgs(candle_ret, candleSeries, chartArea, "캔들 업데이트 성공"));
+            }
+            else
+            {
+                Console.WriteLine($"API 요청 실패: {response.StatusCode} - {response.Content}");
+                // 실패 시 이벤트 발생
+                CandleRetrieved?.Invoke(this, new CandleEventArgs(null, null, null, "캔들 업데이트 실패"));
+            }
+        }
 
         // 시장가 매수 요청
         private async Task Order_Buy_Market_API(string CoinName, string Price)
@@ -561,7 +733,7 @@ namespace GGo_v2
                 Order order = new Order();
 
                 order.CoinName = CoinName;
-                order.CoinNameKR = _CoinList.FirstOrDefault(c => c.CoinName == CoinName).CoinNameKR;
+                order.CoinNameKR = CoinListData.FirstOrDefault(c => c.CoinName == CoinName).CoinNameKR;
                 order.Type = "시장가매수";
 
                 // 성공 시 이벤트 발생
@@ -631,7 +803,7 @@ namespace GGo_v2
                 Order order = new Order();
 
                 order.CoinName = CoinName;
-                order.CoinNameKR = _CoinList.FirstOrDefault(c => c.CoinName == CoinName).CoinNameKR;
+                order.CoinNameKR = CoinListData.FirstOrDefault(c => c.CoinName == CoinName).CoinNameKR;
                 order.Type = "시장가매도";
 
                 // 성공 시 이벤트 발생
@@ -688,8 +860,13 @@ namespace GGo_v2
         private class UpbitCommandParameters
         {
             public string CoinName { get; set; }
+
             public string Order_Price {  get; set; }        
             public string Order_Volume {  get; set; }
+
+            public int Candle_Minute { get; set; }
+            public int Candle_MA_Period {  get; set; }
+            public int Candle_N_of_Candles { get; set; }
         }
 
 
@@ -748,6 +925,12 @@ namespace GGo_v2
                                 await Order_Sell_Market_API(command.Parameters.CoinName, command.Parameters.Order_Volume);
                             });
                             break;
+                        case UpbitCommands.분캔들조회:
+                            await _RequestCounter_Order.ProcessRequestAsync(async () =>
+                            {
+                                await Get_Candle_Minutes_API(command.Parameters.CoinName, command.Parameters.Candle_Minute, command.Parameters.Candle_MA_Period, command.Parameters.Candle_N_of_Candles);
+                            });
+                            break;
                     }
                 }
                 else
@@ -772,7 +955,7 @@ namespace GGo_v2
         }
 
         // 서버 요청 제한 핸들러
-        private readonly ApiRequestHandler _RequestCounter_Order = new ApiRequestHandler(8, TimeSpan.FromSeconds(1));
+        private readonly ApiRequestHandler _RequestCounter_Order = new ApiRequestHandler(10, TimeSpan.FromSeconds(1));
         class ApiRequestHandler
         {
             private readonly int _maxRequestsPerInterval;
@@ -1212,7 +1395,7 @@ namespace GGo_v2
             }
         }
 
-        // Ticker 업데이트 이벤트
+        // 주문 완료 이벤트
         public event EventHandler<OrderEventArgs> OrderRetrieved;
         public class OrderEventArgs : EventArgs
         {
@@ -1226,10 +1409,67 @@ namespace GGo_v2
             }
         }
 
+        // 캔들 업데이트 이벤트
+        public event EventHandler<CandleEventArgs> CandleRetrieved;
+        public class CandleEventArgs : EventArgs
+        {
+            public List<Candle> Candles { get; }
+            public Series Series_Candle { get; }
+            public ChartArea ChartArea_Candle { get; }
+            public string Message { get; }
+
+            public CandleEventArgs(List<Candle> candles, Series series_candle,ChartArea chart_area, string message)
+            {
+                Candles = candles;
+                Series_Candle = series_candle;
+                ChartArea_Candle = chart_area;
+                Message = message;
+            }
+        }
+
         #endregion
 
 
 
+
+
+        #region Functions
+
+
+
+        // List<Candle> to Candle Chart Series
+        public Series Create_CandleSeries_from_List(List<Candle> candles)
+        {
+            var tempCandles = candles.ToList();
+
+            Series _series = new Series("캔들");
+            _series.ChartType = SeriesChartType.Candlestick;
+            _series.XValueType = ChartValueType.DateTime;
+            _series["OpenCloseStyle"] = "Triangle";
+            _series["ShowOpenClose"] = "Both";
+            _series.IsXValueIndexed = false;
+
+            foreach (var candle in tempCandles)
+            {
+                var index = _series.Points.AddXY(candle.Datetime, candle.Trade_Price); // X축 값과 초기 Y값 추가
+
+                // 캔들 차트의 시가, 종가, 저가, 고가 설정
+                _series.Points[index].YValues = new double[4];
+                _series.Points[index].YValues[0] = candle.Low_Price;      // Low
+                _series.Points[index].YValues[1] = candle.High_Price;     // High
+                _series.Points[index].YValues[2] = candle.Opening_Price;  // Open
+                _series.Points[index].YValues[3] = candle.Trade_Price;    // Close
+            }
+
+            // 양봉(빨강)과 음봉(파랑) 색상 설정
+            _series["PriceUpColor"] = "Red";   // 상승(양봉) 색상
+            _series["PriceDownColor"] = "Blue"; // 하락(음봉) 색상
+
+            return _series;
+        }
+
+
+        #endregion
 
 
     }
