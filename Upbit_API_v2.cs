@@ -8,13 +8,18 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
+using System.Net.Http;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.Policy;
 using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.UI.WebControls;
+using System.Windows.Forms;
 using System.Windows.Forms.DataVisualization.Charting;
 using static GGo_v2.Upbit_API_v2;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement.TextBox;
@@ -26,7 +31,7 @@ namespace GGo_v2
     {
         private readonly string _accessKey;
         private readonly string _secretKey;
-        public Upbit_API_v2(string AccessKey,  string SecretKey)
+        public Upbit_API_v2(string AccessKey, string SecretKey)
         {
             _accessKey = AccessKey;
             _secretKey = SecretKey;
@@ -40,34 +45,102 @@ namespace GGo_v2
             // Ticker 조회
             Request_Ticker();
 
+            // 예외처리 코인 등록
+            Init_ExceptionCoins();
+
             // 데이터 업데이터
             _bworker_DataUpdator.DoWork += _bworker_DataUpdator_DoWork;
             _bworker_DataUpdator.RunWorkerAsync();
         }
 
-       
+
+
+
 
 
         #region Data Classes
+
+
+        // 정보 업데이트. (계좌, Ticker, Candle, Orderbook, OrderList)
+        UpbitData _UpbitData = new UpbitData();
+        public class UpbitData
+        {
+            public UpbitData()
+            {
+                Accounts = new List<Accounts>();
+                Tickers = new List<Ticker>();
+                CandleData = new CandleData();
+                OrderResults = new OrderResults();
+                Orderbooks = new List<Orderbook>();
+                PendingOrders = new List<PendingOrder>();
+            }
+
+            public List<Accounts> Accounts;
+            public List<Ticker> Tickers;
+            public CandleData CandleData;
+            public OrderResults OrderResults;
+            public List<Orderbook> Orderbooks;
+            public List<PendingOrder> PendingOrders;
+        }
+
+
+        UpbitData_Updated _UpbitData_Updated = new UpbitData_Updated();
+        public class UpbitData_Updated
+        {
+            public UpbitData_Updated()
+            {
+                IsAccountUpdated = false;
+                IsTickerUpdated = false;
+                IsCandleUpdated = false;
+                IsOrderbookUpdated = false;
+                IsOrderlistUpdated = false;
+                IsPendingOrderUpdated = false;
+            }
+
+
+            public bool IsUpdatedAll()
+            {
+                if ((IsCandleUpdated) && (IsAccountUpdated) && (IsOrderlistUpdated) && (IsOrderbookUpdated) && (IsTickerUpdated) && (IsPendingOrderUpdated))
+                {
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            // 정보 업데이트 여부 (전부 다 업데이트 되면 한번에)
+            public bool IsAccountUpdated;
+            public bool IsTickerUpdated;
+            public bool IsCandleUpdated;
+            public bool IsOrderbookUpdated;
+            public bool IsOrderlistUpdated;
+            public bool IsPendingOrderUpdated;
+        }
+
+
 
         // 기본 정보
         public class Info
         {
             public string KRW { get; set; }                     // 보유 원화
 
-            public double ChangeRate_BitCoin {  get; set; }     // 비트코인 변화율
+            public double ChangeRate_BitCoin { get; set; }     // 비트코인 변화율
 
-            public int N_of_RISE {  get; set; }                 // 상승 코인 수
+            public int N_of_RISE { get; set; }                 // 상승 코인 수
             public int N_of_FALL { get; set; }                  // 하락 코인 수
             public int N_of_EVEN { get; set; }                  // 하락 코인 수
 
 
             // 분 캔들 관련
-            public string Candle_TargetCoinName {  get; set; }
-            public int Candle_Minutes {  get; set; }
+            public string Candle_TargetCoinName { get; set; }
+            public int Candle_Minutes { get; set; }
             public int Candle_MA_Period { get; set; }
             public int Candle_N_of_Candles { get; set; }
         }
+
+
 
 
         // 계좌 정보
@@ -112,7 +185,7 @@ namespace GGo_v2
             public DateTime Datetime { get; set; }             // 타임스탬프
         }
 
-        // 주문 리스트
+        // 주문 결과
         public class Order
         {
             public string CoinName { get; set; }        // 코인명 영문
@@ -120,6 +193,28 @@ namespace GGo_v2
 
             public string Type {  get; set; }           // 매수, 매도
         }
+
+
+        // 캔들 데이터 통합
+        public class CandleData
+        {
+            public List<Candle> Candles { get; set; }
+
+            public ChartArea ChartArea { get; set; }
+
+            public Series candleSeries { get; set; }
+
+            // 볼린저
+            public List<Series> bollingerSeries { get; set; }
+
+
+            // 봉우리, 골
+            public List<Candle> Peaks { get; set; }
+            public List<Candle> Troughs { get; set; }
+            public Series peakSeries { get; set; }
+            public Series troughSeries { get; set; }
+        }
+
 
 
         // 분봉
@@ -144,8 +239,86 @@ namespace GGo_v2
             public double Bollinger_Lower { get; set; }     // 볼린저 하단
 
             public string Red_or_Blue { get; set; }         // 양봉 음봉 여부
+
+            // 봉우리, 골
+            public double Peak {  get; set; }
+            public double Trough {  get; set; }
         }
 
+
+        // 주문 리스트 및 수익금 (주문 결과)
+        public class OrderResults
+        {
+            public List<OrderResult_by_Trade> orderResults_Trade {  get; set; }    // 개별 거래에 대한 거래 결과
+            public List<OrderResult_by_Day> ordereResults_Day { get; set; }      // 일별 수익 결과
+
+            public double TotalProfit { get; set; }                 // 총 수익금
+            public double TotalProfitRate { get; set; }             // 총 수익률
+        }
+
+
+        public class OrderResult_by_Trade
+        {
+            public string CoinName { get; set; }        // 코인명 영문
+            public string CoinNameKR { get; set; }      // 코인명 한글
+
+            public double BuyPrice { get; set; }        // 매수 정산금
+            public double SellPrice { get; set; }        // 매도 정산금
+
+            public double Profit { get; set; }         // 수익금
+            public double ProfitRate { get; set; }      // 수익률
+
+            public DateTime dateTime { get; set; }      // 시간
+        }
+
+        public class OrderResult_by_Day
+        {
+            public double BuyPrice { get; set; }        // 매수 정산금
+            public double SellPrice { get; set; }        // 매도 정산금
+
+            public double Profit { get; set; }         // 수익금
+            public double ProfitRate { get; set; }      // 수익률
+
+            public DateTime dateTime { get; set; }      // 시간
+        }
+
+
+        // 호가
+        public class Orderbook
+        {
+            public double Price { get; set; }
+            public double Volume { get; set; }
+            public double Percent {  get; set; }
+        }
+
+
+        // 미체결
+        public class PendingOrder
+        {
+            [JsonProperty("uuid")]
+            public string Uuid { get; set; } // 주문의 고유 아이디
+
+            [JsonProperty("side")]
+            public string Side { get; set; } // 주문 종류
+
+            [JsonProperty("ord_type")]
+            public string OrderType { get; set; } // 주문 방식
+
+            [JsonProperty("price")]
+            public string Price { get; set; } // 주문 당시 화폐 가격 (NumberString)
+
+            [JsonProperty("state")]
+            public string State { get; set; } // 주문 상태
+
+            [JsonProperty("market")]
+            public string Market { get; set; } // 마켓의 유일키
+
+            [JsonProperty("volume")]
+            public string Volume { get; set; } // 사용자가 입력한 주문 양 (NumberString)
+
+            [JsonProperty("locked")]
+            public string Locked { get; set; } // 거래에 사용 중인 비용 (NumberString)
+        }
 
         #endregion
 
@@ -204,8 +377,60 @@ namespace GGo_v2
 
 
 
+        // 지정가 매도 주문
+        public void Request_Sell_Limit(string CoinName, string LimitPrice)
+        {
+            // 계좌에 있는지 확인
+            var account = _Recent_Accounts.FirstOrDefault(a => a.CoinName == CoinName);
+            if (account != null)
+            {
+                if (account.Volume == "0")
+                {
+                    // 미체결 상태임
+                    OrderRetrieved?.Invoke(this, new OrderEventArgs(null, "지정가 매도 실패. 미체결 상태임."));
+                }
+                else
+                {
+                    UpbitCommandParameters para = new UpbitCommandParameters();
+                    para.CoinName = CoinName;
+                    para.Limit_Price = LimitPrice;
+                    para.Order_Volume = account.Volume;
+
+                    AddCommand(UpbitCommands.지정가매도, para);
+                }
+            }
+            else
+            {
+                // 계좌에 없음
+                OrderRetrieved?.Invoke(this, new OrderEventArgs(null, "지정가 매도 실패. 계좌에 없음."));
+            }
+        }
+
+        // 지정가 매수 주문
+        public void Request_Buy_Limit(string CoinName, string LimitPrice, string BuyingPrice)
+        {
+            UpbitCommandParameters para = new UpbitCommandParameters();
+            para.CoinName = CoinName;
+            para.Limit_Price = LimitPrice;
+            para.Order_Volume = (decimal.Parse(BuyingPrice) / decimal.Parse(LimitPrice)).ToString();
+
+            AddCommand(UpbitCommands.지정가매수, para);
+        }
+
+
+        // 미체결 취소
+        public void Request_Cancel_PendingOrder(string CoinName)
+        {
+
+            UpbitCommandParameters para = new UpbitCommandParameters();
+            para.CoinName = CoinName;
+
+            AddCommand(UpbitCommands.미체결취소, para);
+        }
+
 
         #endregion
+
 
 
         #region Recent Data
@@ -260,13 +485,26 @@ namespace GGo_v2
 
 
 
-        // 주문 리스트 조회
+        // 주문 리스트 (완료된 거래) 조회
+        private void Request_OrderList()
+        {
+            AddCommand(UpbitCommands.주문리스트조회);
+        }
+
 
 
         // 미체결 조회
+        private void Request_PendingOrders()
+        {
+            AddCommand(UpbitCommands.미체결조회);
+        }
 
 
         // 호가 조회
+        private void Request_Orderbook()
+        {
+            AddCommand(UpbitCommands.호가조회);
+        }
 
 
 
@@ -280,7 +518,6 @@ namespace GGo_v2
         // 정해진 시간마다 데이터 업데이트 (ticker, account 등)
         BackgroundWorker _bworker_DataUpdator = new BackgroundWorker();
 
-        // Ticker를 빠르게 할건지 Candle을 빠르게 할껀지 결정
 
         private void _bworker_DataUpdator_DoWork(object sender, DoWorkEventArgs e)
         {
@@ -291,21 +528,60 @@ namespace GGo_v2
             }
 
 
-            // 정해진 시간마다 업데이트.
-            while(true)
+            Stopwatch stopwatch = new Stopwatch();
+
+            while (true)
             {
+                stopwatch.Restart();  // 시작 시간 기록
+
                 Request_Accounts();
-
                 Request_Ticker();
+                Request_OrderList();
+                Request_PendingOrders();
 
-                if(_Info.Candle_TargetCoinName != null)
+                if (_Info.Candle_TargetCoinName != null)
                 {
                     Request_Candle();
+                    Request_Orderbook();
                 }
-               
 
-                Thread.Sleep(1000);
+                
+
+                // 최대 1초 동안 IsUpdatedAll()이 true가 될 때까지 기다림
+                Stopwatch waitTimer = new Stopwatch();
+                waitTimer.Start();
+
+                while (!_UpbitData_Updated.IsUpdatedAll() && waitTimer.ElapsedMilliseconds < 1000)
+                {
+                    Thread.Sleep(10); // CPU 점유율을 줄이기 위해 잠시 대기
+                }
+
+                waitTimer.Stop();
+
+                if (_UpbitData_Updated.IsUpdatedAll())
+                {
+                    UpbitDataRetrieved?.Invoke(this, new UpbitDataEventArgs(_UpbitData));
+                }
+                else
+                {
+                    // 1초 내에 업데이트되지 않으면 데이터 초기화
+                    _UpbitData = new UpbitData();
+                    _UpbitData_Updated = new UpbitData_Updated();
+                }
+
+                stopwatch.Stop();
+
+                // 실행 시간 고려하여 정확히 1초 주기 유지
+                int elapsed = (int)stopwatch.ElapsedMilliseconds;
+                int remainingTime = 1000 - elapsed;
+                if (remainingTime > 0)
+                {
+                    Thread.Sleep(remainingTime);
+                }
             }
+
+
+
         }
 
 
@@ -424,13 +700,14 @@ namespace GGo_v2
                 }
                 ).ToList();
 
-                // 성공 시 이벤트 발생
-                AccountsRetrieved?.Invoke(this, new AccountEventArgs(ret, "계좌 정보를 성공적으로 가져왔습니다."));
+
+                // 최근 값 저장 및 플래그 셋
+                _UpbitData_Updated.IsAccountUpdated = true;
+                _UpbitData.Accounts = ret.ToList();
             }
             else
             {
-                // 실패 시 이벤트 발생
-                AccountsRetrieved?.Invoke(this, new AccountEventArgs(null, "계좌 정보를 가져오는 데 실패했습니다."));
+                Console.WriteLine($"API 요청 실패: {response.StatusCode} - {response.Content}");
             }
         }
 
@@ -546,13 +823,14 @@ namespace GGo_v2
                 }
                 ).ToList();
 
-                // 성공 시 이벤트 발생
-                TickersRetrieved?.Invoke(this, new TickerEventArgs(ret, "Ticker 성공."));
+
+                // 최근 값 저장 및 플래그 셋
+                _UpbitData_Updated.IsTickerUpdated = true;
+                _UpbitData.Tickers = ret.ToList();
+
             }
             else
             {
-                // 실패 시 이벤트 발생
-                TickersRetrieved?.Invoke(this, new TickerEventArgs(null, "Ticker 실패."));
                 Console.WriteLine($"API 요청 실패: {response.StatusCode} - {response.Content}");
             }
 
@@ -650,30 +928,66 @@ namespace GGo_v2
                 // 요청 데이터 개수만큼만 최근기준으로 남기기
                 candle_ret = candle_ret.Skip(candle_ret.Count - N_of_Candles).Take(N_of_Candles).ToList();
 
-                // 캔들 시리즈 만들기
-                Series candleSeries = Create_CandleSeries_from_List(candle_ret);
-
-                // Chart Area 같이 반환
+                
+                // Chart Area
                 ChartArea chartArea = new ChartArea("MinuteCandle");
-
-                // 축 그리드 색상 투명도 설정 (10%)
                 chartArea.AxisX.MajorGrid.LineColor = Color.FromArgb(25, Color.Black); // 10% 투명도 (255 * 0.1 = 25)
                 chartArea.AxisY.MajorGrid.LineColor = Color.FromArgb(25, Color.Black); // 10% 투명도
-                // Y축 스케일 MinMax 구하기
                 double MinY = candle_ret.Min(candle => candle.Low_Price) * 0.99; // low_price 중 최소값
                 double MaxY = candle_ret.Max(candle => candle.High_Price) * 1.01; // high_price 중 최대값
                 chartArea.AxisY.Minimum = MinY;
                 chartArea.AxisY.Maximum = MaxY;
+                chartArea.AxisX.LabelStyle.Format = "HH:mm"; // X축 시간 포맷
+                chartArea.AxisY.IsStartedFromZero = false;  // Y축 0부터 시작 안 함
 
 
-                // 성공 시 이벤트 발생
-                CandleRetrieved?.Invoke(this, new CandleEventArgs(candle_ret, candleSeries, chartArea, "캔들 업데이트 성공"));
+                // 캔들 시리즈 만들기
+                Series candleSeries = Create_CandleSeries_from_List(candle_ret);
+
+                // 볼린저 series
+                List<Series> bollingerSeries = Create_BollingerSeries_from_List(candle_ret).ToList();
+
+                // 봉우리, 골
+                List<Candle> peaks = new List<Candle>();
+                for (int i = 1; i < candle_ret.Count - 1; i++)
+                {
+                    if (candle_ret[i].High_Price > candle_ret[i - 1].High_Price && candle_ret[i].High_Price > candle_ret[i + 1].High_Price)
+                    {
+                        candle_ret[i].Peak = candle_ret[i].High_Price;
+                        peaks.Add(candle_ret[i]);
+                    }
+                }
+                List<Candle> troughs = new List<Candle>();
+                for (int i = 1; i < candle_ret.Count - 1; i++)
+                {
+                    if (candle_ret[i].Low_Price < candle_ret[i - 1].Low_Price && candle_ret[i].Low_Price < candle_ret[i + 1].Low_Price)
+                    {
+                        candle_ret[i].Trough = candle_ret[i].Low_Price;
+                        troughs.Add(candle_ret[i]);
+                    }
+                }
+
+
+
+                // 봉우리, 골 series
+                Series peakSeries = Create_PeakNtroughSeries("봉우리");
+                Series troughSeries = Create_PeakNtroughSeries("골");
+
+                // 최근 값 저장 및 플래그 셋
+                _UpbitData_Updated.IsCandleUpdated = true;
+                _UpbitData.CandleData.Candles = candle_ret.ToList();
+                _UpbitData.CandleData.candleSeries = candleSeries;
+                _UpbitData.CandleData.bollingerSeries = bollingerSeries.ToList();
+                _UpbitData.CandleData.ChartArea = chartArea;
+                _UpbitData.CandleData.Peaks = peaks.ToList();
+                _UpbitData.CandleData.Troughs = troughs.ToList();
+                _UpbitData.CandleData.peakSeries = peakSeries;
+                _UpbitData.CandleData.troughSeries = troughSeries;
+
             }
             else
             {
                 Console.WriteLine($"API 요청 실패: {response.StatusCode} - {response.Content}");
-                // 실패 시 이벤트 발생
-                CandleRetrieved?.Invoke(this, new CandleEventArgs(null, null, null, "캔들 업데이트 실패"));
             }
         }
 
@@ -747,7 +1061,7 @@ namespace GGo_v2
             }
         }
 
-        // 시장가 매수 요청
+        // 시장가 매도 요청
         private async Task Order_Sell_Market_API(string CoinName, string Volume)
         {
             // 1. Query 문자열 생성
@@ -817,11 +1131,452 @@ namespace GGo_v2
             }
         }
 
-        // 주문 리스트 조회
 
-        // 미체결 조회
+        // 지정가 매도 요청
+        private async Task Order_Sell_Limit_API(string CoinName, string LimitPrice, string Volume)
+        {
+            // 소수점 맞추기
+            string adjustedPrice = GetAdjustedLimitPrice(CoinName, decimal.Parse(LimitPrice)).ToString();
+
+            // API 키 설정
+            string accessKey = _accessKey;
+            string secretKey = _secretKey;
+
+            // 1. Query 문자열 생성
+            var query = $"market=KRW-{CoinName}&side=ask&volume={Volume}&price={adjustedPrice}&ord_type=limit";
+
+            // 2. Query Hash 생성 (SHA512)
+            string queryHash;
+            using (SHA512 sha512 = SHA512.Create())
+            {
+                byte[] hash = sha512.ComputeHash(Encoding.UTF8.GetBytes(query));
+                queryHash = BitConverter.ToString(hash).Replace("-", "").ToLower();
+            }
+
+            // 3. JWT 토큰 생성
+            var claims = new List<System.Security.Claims.Claim>
+            {
+                new System.Security.Claims.Claim("access_key", accessKey),
+                new System.Security.Claims.Claim("nonce", Guid.NewGuid().ToString()),
+                new System.Security.Claims.Claim("query_hash", queryHash),
+                new System.Security.Claims.Claim("query_hash_alg", "SHA512")
+            };
+
+            var securityKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
+            var credentials = new Microsoft.IdentityModel.Tokens.SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+            var header = new JwtHeader(credentials);
+            var payload = new JwtPayload(claims);
+            var secToken = new JwtSecurityToken(header, payload);
+            var jwtToken = new JwtSecurityTokenHandler().WriteToken(secToken);
+
+            // 4. HTTP 요청 생성
+            var client = new RestClient("https://api.upbit.com/v1/orders");
+            var request = new RestRequest();
+            request.Method = Method.Post;
+            request.AddHeader("Authorization", $"Bearer {jwtToken}");
+            request.AddHeader("Content-Type", "application/json");
+
+            // 5. 요청 본문 생성 및 추가
+            var body = new
+            {
+                market = "KRW-" + CoinName,
+                side = "ask",
+                volume = Volume,
+                price = adjustedPrice,
+                ord_type = "limit"
+            };
+            request.AddJsonBody(body);
+
+
+            // 6. API 요청 및 응답 처리
+            var response = await client.ExecuteAsync(request);
+            if (response.IsSuccessful)
+            {
+                Console.WriteLine("주문 요청 성공!");
+                Order order = new Order();
+
+                order.CoinName = CoinName;
+                order.CoinNameKR = CoinListData.FirstOrDefault(c => c.CoinName == CoinName).CoinNameKR;
+                order.Type = "지정가매도";
+
+                // 성공 시 이벤트 발생
+                OrderRetrieved?.Invoke(this, new OrderEventArgs(order, "주문 성공"));
+            }
+            else
+            {
+                Console.WriteLine($"주문 요청 실패: {response.StatusCode} - {response.Content}");
+                // 실패 시 이벤트 발생
+                OrderRetrieved?.Invoke(this, new OrderEventArgs(null, "주문 실패"));
+            }
+        }
+
+
+
+        // 지정가 매수 요청
+        private async Task Order_Buy_Limit_API(string CoinName, string LimitPrice, string Volume)
+        {
+            // 소수점 맞추기
+            string adjustedPrice = GetAdjustedLimitPrice(CoinName, decimal.Parse(LimitPrice)).ToString();
+
+
+            // API 키 설정
+            string accessKey = _accessKey;
+            string secretKey = _secretKey;
+
+            // 1. Query 문자열 생성
+            var query = $"market=KRW-{CoinName}&side=bid&volume={Volume}&price={adjustedPrice}&ord_type=limit";
+
+            // 2. Query Hash 생성 (SHA512)
+            string queryHash;
+            using (SHA512 sha512 = SHA512.Create())
+            {
+                byte[] hash = sha512.ComputeHash(Encoding.UTF8.GetBytes(query));
+                queryHash = BitConverter.ToString(hash).Replace("-", "").ToLower();
+            }
+
+            // 3. JWT 토큰 생성
+            var claims = new List<System.Security.Claims.Claim>
+            {
+                new System.Security.Claims.Claim("access_key", accessKey),
+                new System.Security.Claims.Claim("nonce", Guid.NewGuid().ToString()),
+                new System.Security.Claims.Claim("query_hash", queryHash),
+                new System.Security.Claims.Claim("query_hash_alg", "SHA512")
+            };
+
+            var securityKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
+            var credentials = new Microsoft.IdentityModel.Tokens.SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+            var header = new JwtHeader(credentials);
+            var payload = new JwtPayload(claims);
+            var secToken = new JwtSecurityToken(header, payload);
+            var jwtToken = new JwtSecurityTokenHandler().WriteToken(secToken);
+
+            // 4. HTTP 요청 생성
+            var client = new RestClient("https://api.upbit.com/v1/orders");
+            var request = new RestRequest();
+            request.Method = Method.Post;
+            request.AddHeader("Authorization", $"Bearer {jwtToken}");
+            request.AddHeader("Content-Type", "application/json");
+
+            // 5. 요청 본문 생성 및 추가
+            var body = new
+            {
+                market = "KRW-" + CoinName,
+                side = "bid",
+                volume = Volume,
+                price = adjustedPrice,
+                ord_type = "limit"
+            };
+            request.AddJsonBody(body);
+
+            // 6. API 요청 및 응답 처리
+            var response = await client.ExecuteAsync(request);
+            if (response.IsSuccessful)
+            {
+                Console.WriteLine("주문 요청 성공!");
+                Order order = new Order();
+
+                order.CoinName = CoinName;
+                order.CoinNameKR = CoinListData.FirstOrDefault(c => c.CoinName == CoinName).CoinNameKR;
+                order.Type = "지정가매수";
+
+                // 성공 시 이벤트 발생
+                OrderRetrieved?.Invoke(this, new OrderEventArgs(order, "주문 성공"));
+            }
+            else
+            {
+                Console.WriteLine($"주문 요청 실패: {response.StatusCode} - {response.Content}");
+                // 실패 시 이벤트 발생
+                OrderRetrieved?.Invoke(this, new OrderEventArgs(null, "주문 실패"));
+            }
+        }
+
+
+
+        // 주문 리스트 조회
+        private async Task Get_OrderList_API()
+        {
+            // 쿼리 스트링 생성
+            var queryParams = new Dictionary<string, string>
+        {
+            //{ "state", "done" },
+            //{ "to", DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss") },
+            { "limit", "1000" }
+        };
+
+            var queryString = string.Join("&", queryParams.Select(kvp => $"{kvp.Key}={kvp.Value}"));
+
+            // JWT Header
+            var header = new
+            {
+                alg = "HS256",
+                typ = "JWT"
+            };
+
+            // JWT Payload
+            var payload = new
+            {
+                access_key = _accessKey,
+                nonce = Guid.NewGuid().ToString(), // 유니크한 요청 ID
+                query = queryString
+            };
+
+            // Base64 URL Encoding
+            string EncodeBase64Url(string input)
+            {
+                return Convert.ToBase64String(Encoding.UTF8.GetBytes(input))
+                    .Replace("+", "-")
+                    .Replace("/", "_")
+                    .Replace("=", "");
+            }
+
+            // Header, Payload 직렬화 후 Base64 URL Encoding
+            var encodedHeader = EncodeBase64Url(JsonConvert.SerializeObject(header));
+            var encodedPayload = EncodeBase64Url(JsonConvert.SerializeObject(payload));
+
+            // Signature 생성 (HMAC-SHA256)
+            var secretBytes = Encoding.UTF8.GetBytes(_secretKey);
+            var signature = string.Empty;
+            using (var hmac = new HMACSHA256(secretBytes))
+            {
+                var signatureBytes = hmac.ComputeHash(Encoding.UTF8.GetBytes($"{encodedHeader}.{encodedPayload}"));
+                signature = Convert.ToBase64String(signatureBytes)
+                    .Replace("+", "-")
+                    .Replace("/", "_")
+                    .Replace("=", "");
+            }
+
+            // 최종 JWT
+            var jwtToken = $"{encodedHeader}.{encodedPayload}.{signature}";
+
+            // API 요청
+            var client = new RestClient("https://api.upbit.com/v1/orders/closed");
+            var request = new RestRequest();
+            request.Method = Method.Get;
+
+            // 쿼리 파라미터 추가
+            foreach (var param in queryParams)
+            {
+                request.AddQueryParameter(param.Key, param.Value);
+            }
+
+            // Authorization 헤더 추가
+            request.AddHeader("Authorization", $"Bearer {jwtToken}");
+
+            // API 호출
+            var response = await client.ExecuteAsync(request);
+
+            if (response.IsSuccessful)
+            {
+                // JSON 데이터를 UpbitOrder 리스트로 변환
+                List<Upbit_OrderList> orderLists = JsonConvert.DeserializeObject<List<Upbit_OrderList>>(response.Content);
+
+                // DateTime 계산
+                orderLists.ForEach(dt => dt.CreatedAt_DT = DateTime.Parse(dt.CreatedAt));
+
+
+                // 수익률 계산
+                OrderResults ret = Create_OrderListProfits_from_OrderList(orderLists);
+
+
+                // 최근 값 저장 및 플래그 셋
+                _UpbitData_Updated.IsOrderlistUpdated = true;
+                _UpbitData.OrderResults = ret;
+
+            }
+            else
+            {
+                Console.WriteLine($"API 요청 실패: {response.StatusCode} - {response.Content}");
+            }
+        }
+
 
         // 호가 조회
+        public async Task Get_Orderbook_API()
+        {
+            string apiUrl = $"https://api.upbit.com/v1/orderbook?markets={"KRW-" + _Info.Candle_TargetCoinName}";
+
+            using (var client = new HttpClient())
+            {
+                var response = await client.GetAsync(apiUrl);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var content = await response.Content.ReadAsStringAsync();
+
+                    // JSON 응답을 명확한 모델로 역직렬화
+                    List<Upbit_Orderbook> orderBooks = JsonConvert.DeserializeObject<List<Upbit_Orderbook>>(content);
+
+
+                    List<Orderbook> tempOrderbooks = new List<Orderbook>();
+
+                    foreach(var price in orderBooks[0].OrderbookUnits)
+                    {
+                        Orderbook tempAsk = new Orderbook();
+                        tempAsk.Price = price.AskPrice;
+                        tempAsk.Volume = price.AskSize;
+
+                        Orderbook tempBid = new Orderbook();
+                        tempBid.Price = price.BidPrice;
+                        tempBid.Volume = price.BidSize;
+
+                        tempOrderbooks.Add(tempAsk);
+                        tempOrderbooks.Add(tempBid);
+                    }
+
+                    // 가격으로 재정렬
+                    tempOrderbooks.OrderByDescending(x => x.Price).ToList();
+
+
+                    // 퍼센트 입력
+                    double totalVolume = orderBooks[0].TotalBidSize + orderBooks[0].TotalAskSize;
+                    foreach (var target in tempOrderbooks)
+                    {
+                        target.Percent = (target.Volume / totalVolume) * 100;
+                    }
+
+
+                    // 최근 값 저장 및 플래그 셋
+                    _UpbitData_Updated.IsOrderbookUpdated = true;
+                    _UpbitData.Orderbooks = tempOrderbooks.ToList();
+                }
+                else
+                {
+                    Console.WriteLine($"API 요청 실패: {response.StatusCode}");
+
+                }
+            }
+        }
+
+
+        // 미체결 내역 조회
+        public async Task Get_PendingOrders_API()
+        {
+            var payload = new JwtPayload
+        {
+            { "access_key", _accessKey },
+            { "nonce", Guid.NewGuid().ToString() }
+        };
+
+            var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_secretKey));
+            var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+            var header = new JwtHeader(credentials);
+            var token = new JwtSecurityToken(header, payload);
+            string jwtToken = new JwtSecurityTokenHandler().WriteToken(token);
+
+            string authorizationToken = $"Bearer {jwtToken}";
+
+            var client = new RestClient("https://api.upbit.com/v1/orders");
+            var request = new RestRequest();
+            request.Method = Method.Get;
+            request.AddHeader("Authorization", authorizationToken);
+
+            var response = await client.ExecuteAsync(request);
+
+            if (response.IsSuccessful)
+            {
+                // JSON 데이터를 객체로 변환
+                var orders = JsonConvert.DeserializeObject<List<PendingOrder>>(response.Content);
+
+                // Market 속성에서 "KRW-" 제거
+                foreach (var order in orders)
+                {
+                    if (order.Market.StartsWith("KRW-"))
+                    {
+                        order.Market = order.Market.Replace("KRW-", string.Empty);
+                    }
+                }
+
+
+                // 최근 값 저장 및 플래그 셋
+                _UpbitData_Updated.IsPendingOrderUpdated = true;
+                _UpbitData.PendingOrders = orders.ToList();
+
+            }
+            else
+            {
+                Console.WriteLine($"API 요청 실패: {response.StatusCode} - {response.Content}");
+                
+            }
+        }
+
+
+        // 미체결 거래 취소
+        public async Task Cancel_PendingOrder_API(string CoinName)
+        {
+            // 미체결 내역에 있는지 확인
+            var pendingOrder = _UpbitData.PendingOrders.FirstOrDefault(a => a.Market == CoinName);
+
+            if (pendingOrder == null)
+            {
+                OrderRetrieved?.Invoke(this, new OrderEventArgs(null, "미체결 취소 실패"));
+                return;
+            }
+
+            string queryString = $"uuid={pendingOrder.Uuid}";
+
+
+            // JWT 토큰 생성
+            // 1. Query Hash 생성 (SHA-512 해시)
+            string queryHash;
+            using (var sha512 = SHA512.Create())
+            {
+                var hashBytes = sha512.ComputeHash(Encoding.UTF8.GetBytes(queryString));
+                queryHash = BitConverter.ToString(hashBytes).Replace("-", "").ToLower();
+            }
+
+            // 2. JWT Payload 생성
+            var payload = new JwtPayload
+    {
+        { "access_key", _accessKey }, // API 키
+        { "nonce", Guid.NewGuid().ToString() }, // 요청 고유값
+        { "query_hash", queryHash }, // Query String의 SHA-512 해시값
+        { "query_hash_alg", "SHA512" } // 해시 알고리즘 이름
+    };
+
+            // 3. Secret Key 설정
+            var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_secretKey));
+            var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+
+            // 4. JWT Header와 Token 생성
+            var header = new JwtHeader(credentials);
+            var token = new JwtSecurityToken(header, payload);
+
+            // 5. JWT Token 반환
+            var jwtToken = new JwtSecurityTokenHandler().WriteToken(token);
+
+
+            // HTTP 요청
+            var client = new RestClient("https://api.upbit.com/v1/order");
+            var request = new RestRequest();
+            request.Method = Method.Delete;
+            request.AddHeader("Authorization", $"Bearer {jwtToken}");
+            request.AddQueryParameter("uuid", pendingOrder.Uuid);
+
+            var response = await client.ExecuteAsync(request);
+
+
+            if (response.IsSuccessful)
+            {
+                // JSON 데이터를 객체로 변환
+                var orders = JsonConvert.DeserializeObject<PendingOrder>(response.Content);
+
+                Order order = new Order();
+                order.CoinName = CoinName;
+                order.CoinNameKR = CoinListData.FirstOrDefault(c => c.CoinName == CoinName).CoinNameKR;
+                order.Type = "미체결취소";
+
+                // 성공 시 이벤트 발생
+                OrderRetrieved?.Invoke(this, new OrderEventArgs(order, "미체결 취소 성공"));
+            }
+            else
+            {
+                Console.WriteLine($"API 요청 실패: {response.StatusCode} - {response.Content}");
+                // 성공 시 이벤트 발생
+                OrderRetrieved?.Invoke(this, new OrderEventArgs(null, "미체결 취소 실패"));
+            }
+
+        }
+
 
         #endregion
 
@@ -853,7 +1608,10 @@ namespace GGo_v2
             시장가매도 = 5,
             주문리스트조회 = 6,
             미체결조회 = 7,
-            호가조회 = 8
+            호가조회 = 8,
+            지정가매도 = 9,
+            지정가매수 = 10,
+            미체결취소 = 11
         }
 
         // 파라메터
@@ -861,7 +1619,8 @@ namespace GGo_v2
         {
             public string CoinName { get; set; }
 
-            public string Order_Price {  get; set; }        
+            public string Order_Price {  get; set; } 
+            public string Limit_Price { get; set; }      // for limit order
             public string Order_Volume {  get; set; }
 
             public int Candle_Minute { get; set; }
@@ -929,6 +1688,42 @@ namespace GGo_v2
                             await _RequestCounter_Order.ProcessRequestAsync(async () =>
                             {
                                 await Get_Candle_Minutes_API(command.Parameters.CoinName, command.Parameters.Candle_Minute, command.Parameters.Candle_MA_Period, command.Parameters.Candle_N_of_Candles);
+                            });
+                            break;
+                        case UpbitCommands.주문리스트조회:
+                            await _RequestCounter_Order.ProcessRequestAsync(async () =>
+                            {
+                                await Get_OrderList_API();
+                            });
+                            break;
+                        case UpbitCommands.호가조회:
+                            await _RequestCounter_Order.ProcessRequestAsync(async () =>
+                            {
+                                await Get_Orderbook_API();
+                            });
+                            break;
+                        case UpbitCommands.지정가매도:
+                            await _RequestCounter_Order.ProcessRequestAsync(async () =>
+                            {
+                                await Order_Sell_Limit_API(command.Parameters.CoinName, command.Parameters.Limit_Price, command.Parameters.Order_Volume);
+                            });
+                            break;
+                        case UpbitCommands.지정가매수:
+                            await _RequestCounter_Order.ProcessRequestAsync(async () =>
+                            {
+                                await Order_Buy_Limit_API(command.Parameters.CoinName, command.Parameters.Limit_Price, command.Parameters.Order_Volume);
+                            });
+                            break;
+                        case UpbitCommands.미체결조회:
+                            await _RequestCounter_Order.ProcessRequestAsync(async () =>
+                            {
+                                await Get_PendingOrders_API();
+                            });
+                            break;
+                        case UpbitCommands.미체결취소:
+                            await _RequestCounter_Order.ProcessRequestAsync(async () =>
+                            {
+                                await Cancel_PendingOrder_API(command.Parameters.CoinName);
                             });
                             break;
                     }
@@ -1260,11 +2055,13 @@ namespace GGo_v2
 
             [JsonProperty("time_in_force")]
             public string TimeInForce { get; set; } // IOC / FOK 설정 값 (String)
+
+            public DateTime CreatedAt_DT { get; set; }
         }
 
 
         // 미체결 조회
-        public class PendingOrder
+        public class Upbit_PendingOrder
         {
             [JsonProperty("uuid")]
             public string Uuid { get; set; } // 주문의 고유 아이디
@@ -1320,7 +2117,7 @@ namespace GGo_v2
 
 
         // 호가 조회
-        public class Orderbook
+        public class Upbit_Orderbook
         {
             [JsonProperty("market")]
             public string Market { get; set; } // 종목 코드
@@ -1335,12 +2132,12 @@ namespace GGo_v2
             public double TotalBidSize { get; set; } // 호가 매수 총 잔량
 
             [JsonProperty("orderbook_units")]
-            public List<OrderbookUnit> OrderbookUnits { get; set; } // 호가 리스트
+            public List<Upbit_OrderbookUnit> OrderbookUnits { get; set; } // 호가 리스트
         }
 
 
         // 호가 유닛
-        public class OrderbookUnit
+        public class Upbit_OrderbookUnit
         {
             [JsonProperty("ask_price")]
             public double AskPrice { get; set; } // 매도 호가
@@ -1367,33 +2164,21 @@ namespace GGo_v2
 
         #region Events
 
-        // 계좌 업데이트 이벤트
-        public event EventHandler<AccountEventArgs> AccountsRetrieved;
-        public class AccountEventArgs : EventArgs
-        {
-            public List<Accounts> Accounts { get; }
-            public string Message { get; }
 
-            public AccountEventArgs(List<Accounts> accounts, string message)
+
+        // 정보 업데이트
+        public event EventHandler<UpbitDataEventArgs> UpbitDataRetrieved;
+        public class UpbitDataEventArgs : EventArgs
+        {
+            public UpbitData UpbitData { get; set; }
+
+            public UpbitDataEventArgs(UpbitData upbitData)
             {
-                Accounts = accounts;
-                Message = message;
+                UpbitData = upbitData;
             }
         }
 
-        // Ticker 업데이트 이벤트
-        public event EventHandler<TickerEventArgs> TickersRetrieved;
-        public class TickerEventArgs : EventArgs
-        {
-            public List<Ticker> Tickers { get; }
-            public string Message { get; }
 
-            public TickerEventArgs(List<Ticker> tickers, string message)
-            {
-                Tickers = tickers;
-                Message = message;
-            }
-        }
 
         // 주문 완료 이벤트
         public event EventHandler<OrderEventArgs> OrderRetrieved;
@@ -1409,23 +2194,6 @@ namespace GGo_v2
             }
         }
 
-        // 캔들 업데이트 이벤트
-        public event EventHandler<CandleEventArgs> CandleRetrieved;
-        public class CandleEventArgs : EventArgs
-        {
-            public List<Candle> Candles { get; }
-            public Series Series_Candle { get; }
-            public ChartArea ChartArea_Candle { get; }
-            public string Message { get; }
-
-            public CandleEventArgs(List<Candle> candles, Series series_candle,ChartArea chart_area, string message)
-            {
-                Candles = candles;
-                Series_Candle = series_candle;
-                ChartArea_Candle = chart_area;
-                Message = message;
-            }
-        }
 
         #endregion
 
@@ -1448,6 +2216,7 @@ namespace GGo_v2
             _series["OpenCloseStyle"] = "Triangle";
             _series["ShowOpenClose"] = "Both";
             _series.IsXValueIndexed = false;
+            _series.IsVisibleInLegend = false;
 
             foreach (var candle in tempCandles)
             {
@@ -1459,6 +2228,7 @@ namespace GGo_v2
                 _series.Points[index].YValues[1] = candle.High_Price;     // High
                 _series.Points[index].YValues[2] = candle.Opening_Price;  // Open
                 _series.Points[index].YValues[3] = candle.Trade_Price;    // Close
+                _series.Points[index].Color = candle.Red_or_Blue == "Red" ? Color.Red : Color.Blue;
             }
 
             // 양봉(빨강)과 음봉(파랑) 색상 설정
@@ -1466,6 +2236,246 @@ namespace GGo_v2
             _series["PriceDownColor"] = "Blue"; // 하락(음봉) 색상
 
             return _series;
+        }
+
+
+        // List<Candle> to Bollinger Series
+        public List<Series> Create_BollingerSeries_from_List(List<Candle> candles)
+        {
+            List<Series> series_ret = new List<Series>();
+
+            var tempCandles = candles.ToList();
+
+            Series series_bollinger_upper = new Series("볼린저 상단");
+            series_bollinger_upper.ChartType = SeriesChartType.Line;
+            series_bollinger_upper.XValueType = ChartValueType.DateTime;
+            series_bollinger_upper.Color = Color.Blue;
+            series_bollinger_upper.IsVisibleInLegend = false;
+
+            Series series_bollinger_mid = new Series("볼린저 중단");
+            series_bollinger_mid.ChartType = SeriesChartType.Line;
+            series_bollinger_mid.XValueType = ChartValueType.DateTime;
+            series_bollinger_mid.Color = Color.Green;
+            series_bollinger_mid.IsVisibleInLegend = false;
+
+            Series series_bollinger_lower = new Series("볼린저 하단");
+            series_bollinger_lower.ChartType = SeriesChartType.Line;
+            series_bollinger_lower.XValueType = ChartValueType.DateTime;
+            series_bollinger_lower.Color = Color.Gold;
+            series_bollinger_lower.IsVisibleInLegend = false;
+
+
+            foreach (var candle in tempCandles)
+            {
+                // 볼린저 밴드
+                series_bollinger_upper.Points.AddXY(candle.Datetime, candle.Bollinger_Upper);
+                series_bollinger_mid.Points.AddXY(candle.Datetime, candle.Bollinger_Middle);
+                series_bollinger_lower.Points.AddXY(candle.Datetime, candle.Bollinger_Lower);
+            }
+
+            series_ret.Add(series_bollinger_upper);
+            series_ret.Add(series_bollinger_mid);
+            series_ret.Add(series_bollinger_lower);
+
+            return series_ret;
+        }
+
+
+        // List<Candle> to Peak n Trough Series
+        public Series Create_PeakNtroughSeries(string SeriesName)
+        {
+            Series _series = new Series(SeriesName);
+            _series.ChartType = SeriesChartType.Line;
+            _series.XValueType = ChartValueType.DateTime;
+            _series.Color = Color.Black;
+            _series.IsVisibleInLegend = false;
+
+            return _series;
+        }
+        
+
+
+        // 오더리스트에서 수익률 계산하기
+        OrderResults Create_OrderListProfits_from_OrderList(List<Upbit_OrderList> orderList)
+        {
+            // 오더리스트 결과
+            OrderResults orderResult = new OrderResults();
+            orderResult.orderResults_Trade = new List<OrderResult_by_Trade>();
+            orderResult.ordereResults_Day = new List<OrderResult_by_Day>();
+
+
+            // 매도 전체
+            var askOrders = orderList.Where(a => a.Side == "ask").ToList();
+            askOrders = askOrders.Where(a => a.State == "done").ToList();
+
+            // 매수 전체
+            var bidOrders = orderList.Where(a => a.Side == "bid").ToList();
+
+
+            // 거래별 수익률 저장
+            foreach (var ask in askOrders)
+            {
+                // 매도한 시간 이후부터 검색
+                var targetBid = bidOrders
+                    .Where(a => a.CreatedAt_DT <= ask.CreatedAt_DT) // 매도 이전의 매수만 검색
+                    .FirstOrDefault(a => a.ExecutedVolume == ask.ExecutedVolume && a.Market == ask.Market);
+
+                if (targetBid != null)
+                {
+                    decimal buyPrice = 0;
+                    if (targetBid.PaidFee != "0")
+                    {
+                        buyPrice = (decimal.Parse(targetBid.PaidFee) / 0.0005m) + decimal.Parse(targetBid.PaidFee);
+                    }
+                    else
+                    {
+                        buyPrice = (decimal.Parse(targetBid.RemainingFee) / 0.0005m) + decimal.Parse(targetBid.RemainingFee);
+                    }
+                    
+
+                    decimal sellPrice = 0;
+                    if(ask.Price != null)
+                    {
+                        sellPrice = (decimal.Parse(ask.Price) * decimal.Parse(ask.ExecutedVolume)) - decimal.Parse(ask.PaidFee);
+                    }
+                    else
+                    {
+                        sellPrice = (decimal.Parse(ask.PaidFee) / 0.0005m) - decimal.Parse(ask.PaidFee);
+                    }
+
+                    // 수익 계산
+                    decimal tempProfit = sellPrice - buyPrice;
+                    decimal tempProfitRate = ((sellPrice - buyPrice) / buyPrice) * 100;
+
+                    // 기록 후 리스트에 저장
+                    OrderResult_by_Trade tempOrderTrade = new OrderResult_by_Trade
+                    {
+                        CoinName = ask.Market.Replace("KRW-", ""),
+                        CoinNameKR = CoinListData.FirstOrDefault(c => c.CoinName == ask.Market.Replace("KRW-", ""))?.CoinNameKR,
+                        BuyPrice = (double)buyPrice,
+                        SellPrice = (double)sellPrice,
+                        Profit = (double)tempProfit,
+                        ProfitRate = (double)tempProfitRate,
+                        dateTime = ask.CreatedAt_DT
+                    };
+
+                    orderResult.orderResults_Trade.Add(tempOrderTrade);
+                }
+            }
+
+
+
+            var dailyResults = orderResult.orderResults_Trade
+                .GroupBy(trade => trade.dateTime.Date) // 날짜별 그룹화
+                .Select(group => new OrderResult_by_Day
+                {
+                    dateTime = group.Key,  // 해당 날짜
+                    BuyPrice = group.Sum(trade => trade.BuyPrice), // 일별 총 매수 정산 금액
+                    SellPrice = group.Sum(trade => trade.SellPrice), // 일별 총 매도 정산 금액
+                    Profit = group.Sum(trade => trade.SellPrice) - group.Sum(trade => trade.BuyPrice), // 일별 총 수익금
+                    ProfitRate = group.Sum(trade => trade.BuyPrice) > 0
+                        ? ((group.Sum(trade => trade.SellPrice) - group.Sum(trade => trade.BuyPrice)) / group.Sum(trade => trade.BuyPrice)) * 100
+                        : 0  // 매수 금액이 0이면 수익률 0%
+                })
+                .ToList();
+
+            // 일별 수익 데이터를 저장
+            orderResult.ordereResults_Day.AddRange(dailyResults);
+
+
+            return orderResult;
+        }
+
+
+
+        // 지정가 소수점 맞추기
+        public decimal GetAdjustedLimitPrice(string CoinName, decimal Sell_Price)
+        {
+
+            // 주문 가격 단위에 따라 매도 가격 조정
+            decimal adjustedSellPrice = 0;
+
+            // 예외 코인인지 확인
+            if (_ExceptionCoins.Contains(CoinName))
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 1) * 1; // 1 KRW 단위
+            }
+            else if (Sell_Price >= 2000000)
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 1000) * 1000; // 1,000 KRW 단위
+            }
+            else if (Sell_Price >= 1000000)
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 500) * 500; // 500 KRW 단위
+            }
+            else if (Sell_Price >= 500000)
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 100) * 100; // 100 KRW 단위
+            }
+            else if (Sell_Price >= 100000)
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 50) * 50; // 50 KRW 단위
+            }
+            else if (Sell_Price >= 10000)
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 10) * 10; // 10 KRW 단위
+            }
+            else if (Sell_Price >= 1000)
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 1) * 1; // 1 KRW 단위
+            }
+            else if (Sell_Price >= 100)
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 0.1m) * 0.1m; // 0.1 KRW 단위
+            }
+            else if (Sell_Price >= 10)
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 0.01m) * 0.01m; // 0.01 KRW 단위
+            }
+            else if (Sell_Price >= 1)
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 0.001m) * 0.001m; // 0.001 KRW 단위
+            }
+            else if (Sell_Price >= 0.1m)
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 0.0001m) * 0.0001m; // 0.0001 KRW 단위
+            }
+            else if (Sell_Price >= 0.01m)
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 0.00001m) * 0.00001m; // 0.00001 KRW 단위
+            }
+            else if (Sell_Price >= 0.001m)
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 0.000001m) * 0.000001m; // 0.000001 KRW 단위
+            }
+            else
+            {
+                adjustedSellPrice = Math.Floor(Sell_Price / 0.0000001m) * 0.0000001m; // 0.0000001 KRW 단위
+            }
+
+            return adjustedSellPrice;
+        }
+
+        // 예외처리 코인 리스트
+        List<string> _ExceptionCoins = new List<string>();
+        void Init_ExceptionCoins()
+        {
+            _ExceptionCoins.Add("ADA");
+            _ExceptionCoins.Add("ALGO");
+            _ExceptionCoins.Add("BLUR");
+            _ExceptionCoins.Add("CELO");
+            _ExceptionCoins.Add("ELF");
+            _ExceptionCoins.Add("EOS");
+            _ExceptionCoins.Add("GRS");
+            _ExceptionCoins.Add("GRT");
+            _ExceptionCoins.Add("ICX");
+            _ExceptionCoins.Add("MANA");
+            _ExceptionCoins.Add("MINA");
+            _ExceptionCoins.Add("POL");
+            _ExceptionCoins.Add("SAND");
+            _ExceptionCoins.Add("SEI");
+            _ExceptionCoins.Add("STG");
+            _ExceptionCoins.Add("TRX");
         }
 
 
